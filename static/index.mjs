@@ -27,6 +27,11 @@ socket.on('leaves', (payload) => {
     console.debug('Other client left', payload);
 });
 
+socket.on('kick', (payload) => {
+    console.log('Kicked out by', payload);
+    socket.disconnect();
+});
+
 socket.on('disconnect', () => {
     console.log('Disconnected');
     console.groupEnd('Connected');
