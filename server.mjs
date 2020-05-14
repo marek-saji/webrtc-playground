@@ -13,13 +13,13 @@ const STATIC_DIR = joinPath(DIR, 'static');
 
 // Logging
 
-function log (context, { clientId, clientName, room }, ...argv)
+function log (context, { id, name, room }, ...argv)
 {
     const humanReadableContext = [
         context,
-        clientName || null,
+        name || null,
         room ? `in #${room}` : null,
-        `(${clientId})`,
+        `(${id})`,
     ].filter((a) => a != null).join(' ');
     const prettyContext = `[0;34m[${humanReadableContext}][0;0m`;
     // eslint-disable-next-line no-console
@@ -142,6 +142,30 @@ io.sockets.on('connection', (socket) => {
         const roomDescriptor = getRoomDescriptor(socket, client.room);
         emit('hello', { you: client.descriptor, room: roomDescriptor });
         broadcast('sync-up', { room: roomDescriptor });
+    });
+
+    socket.on('offer', ({ to, offer }) => {
+        logClient('offer', { to });
+        socket.to(to).emit('offer', {
+            from: client.id,
+            offer,
+        });
+    });
+
+    socket.on('answer', ({ to, answer }) => {
+        logClient('answer', { to });
+        socket.to(to).emit('answer', {
+            from: client.id,
+            answer,
+        });
+    });
+
+    socket.on('ice-candidate', ({ to, candidate }) => {
+        logClient('ice-candidate', { to });
+        socket.to(to).emit('ice-candidate', {
+            from: client.id,
+            candidate,
+        });
     });
 
     socket.on('log', logClient);
