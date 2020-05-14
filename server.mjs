@@ -57,8 +57,8 @@ class Client
     get descriptor ()
     {
         return {
-            clientId: this.id,
-            clientName: this.name,
+            id: this.id,
+            name: this.name,
             room: this.room,
         };
     }
