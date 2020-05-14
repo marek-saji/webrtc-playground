@@ -8,19 +8,33 @@
         <script type="module" src="/index.mjs"></script>
     </head>
     <body>
-        <header>
-            <h1><kbd>F12</kbd></h1>
-            DevTools console is where it’s at.
-        </header>
+        <h1>Hello, <output id=clientName /></h1>
+
+        <aside>
+            <kbd>F12</kbd> console is where it’s at.
+        </aside>
 
         <p>
-            <a target=_blank href=/>One more, please</a>
+            <a id=new-client-link target=_blank href=/>Self–replicate.</a>
         </p>
 
-        <h2>Hello, <output id=clientName /></h2>
+        <h2>People present</h2>
 
-        <p>
-            People present: <output id=clientList />.
-        </p>
+        <template id=people-list-item-tpl>
+            <h3>
+                <output name=name />
+            </h3>
+            <ul>
+                <li>connection: <output name=connection />
+                <li>data channel: <output name=data-channel />
+            </ul>
+            <pre><output name="chat-transcript"></output></pre>
+            <form name="chat-form">
+                <input name="input" autocomplete="off" enterkeyhint="send" />
+                <button type="submit">Send</button>
+            </form>
+        </template>
+        <section id=people-list>
+        </section>
     </body>
 </html>

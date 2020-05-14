@@ -8,14 +8,20 @@ const clientName = url.searchParams.get('name');
 
 if (!clientName || !room)
 {
-    url.searchParams.set('room', 'general');
+    url.searchParams.set('room', room || 'general');
     // eslint-disable-next-line no-alert
-    url.searchParams.set('name', prompt('Who are you?'));
+    url.searchParams.set('name', clientName || prompt('Who are you?'));
     window.location = url;
 
     // Cheap way to stop the script.
     throw new Error('BYE');
 }
+
+document.getElementById('new-client-link').href = (() => {
+    const sp = new URLSearchParams(url.searchParams);
+    sp.delete('name');
+    return `?${sp}`;
+})();
 
 const rtcConfig = {
     iceServers: [
@@ -26,19 +32,48 @@ const rtcConfig = {
 };
 
 const peers = new Map();
-window.peers = peers; // DEBUG
 
-window.title = `${clientName}, #${room}`;
+document.title = `${clientName}, #${room}`;
 document.getElementById('clientName').textContent = clientName;
 
 const socket = io.connect();
 
-function updateClientList (clients)
+function updateClientList ()
 {
-    document.getElementById('clientList').textContent =
-        clients
-            .map((client) => client.name)
-            .join(', ');
+    const listElement = document.getElementById('people-list');
+    if (peers.size === 0)
+    {
+        listElement.textContent = 'There’s noone here.';
+        return;
+    }
+
+    const itemTpl = document.getElementById('people-list-item-tpl');
+    listElement.textContent = '';
+    peers.forEach((peer) => {
+        const item = document.importNode(itemTpl.content, true);
+        item.querySelector('[name="name"]').textContent = peer.client.name;
+        item.querySelector('[name="connection"]').textContent = peer.connection ? '✔' : '❌';
+        item.querySelector('[name="data-channel"]').textContent = peer.dataChannel ? '✔' : '❌';
+
+        const transcript = item.querySelector('[name="chat-transcript"]');
+        transcript.setAttribute('data-client-id', peer.client.id);
+        item.querySelector('[name="chat-form"]').addEventListener('submit', (event) => {
+            event.preventDefault();
+            const input = event.currentTarget.querySelector('[name="input"]');
+            const { value } = input;
+            peer.dataChannel.send(value);
+            transcript.textContent += `\n you: ${value}`;
+            input.value = '';
+            input.focus();
+        });
+
+        listElement.appendChild(item);
+    });
+}
+
+function onDataChannelMessage (clientId, event)
+{
+    document.querySelector(`[data-client-id="${clientId}"]`).textContent += `\nthem: ${event.data}`;
 }
 
 // FIXME No callback hell, please
@@ -62,6 +97,7 @@ function connectPeer (id)
             to: id,
             candidate,
         });
+        updateClientList();
     };
 
     const dataChannel = connection.createDataChannel('test');
@@ -73,6 +109,7 @@ function connectPeer (id)
     };
     dataChannel.onmessage = (event) => {
         console.debug(`Message on data channel from ${id}`, event);
+        onDataChannelMessage(id, event);
     };
 
     connection.createOffer(
@@ -83,6 +120,7 @@ function connectPeer (id)
                     offer,
                 });
             });
+            updateClientList();
         },
         (error) => {
             console.error('Failed to create offer:', error);
@@ -92,8 +130,10 @@ function connectPeer (id)
     return { connection, dataChannel };
 }
 
-function pruneOldPeers (newClientIds)
+function pruneOldPeers (newClients)
 {
+    const newClientIds = newClients.map(({ id }) => id);
+
     Array.from(peers.keys())
         .filter((id) => id !== socket.id)
         .filter((id) => !newClientIds.includes(id))
@@ -103,25 +143,37 @@ function pruneOldPeers (newClientIds)
         });
 }
 
-function addNewPeers (newClientIds)
+function addNewPeers (newClients)
 {
-    newClientIds
-        .filter((id) => id !== socket.id)
-        .filter((id) => !peers.has(id))
-        .forEach((id) => {
-            const { connection, dataChannel } = connectPeer(id);
-            peers.set(id, {
-                client: { id }, // FIXME
-                connection,
-                dataChannel,
+    newClients
+        .filter(({ id }) => id !== socket.id)
+        .filter(({ id }) => !peers.has(id))
+        .forEach((client) => {
+            peers.set(client.id, {
+                client,
             });
         });
 }
 
-function syncPeers (clientIds)
+function connectPeers ()
 {
-    pruneOldPeers(clientIds);
-    addNewPeers(clientIds);
+    Array.from(peers.values())
+        .filter((peer) => !peer.connection)
+        .forEach((peer) => {
+            const { connection, dataChannel } =
+                connectPeer(peer.client.id);
+            // eslint-disable-next-line no-param-reassign
+            peer.connection = connection;
+            // eslint-disable-next-line no-param-reassign
+            peer.dataChannel = dataChannel;
+        });
+}
+
+function syncPeers (clients)
+{
+    pruneOldPeers(clients);
+    addNewPeers(clients);
+    updateClientList();
 }
 
 socket.on('connect', () => {
@@ -132,7 +184,8 @@ socket.on('connect', () => {
 
 socket.on('hello', (payload) => {
     console.log('Hello', payload);
-    updateClientList(payload.room.clients);
+    syncPeers(payload.room.clients);
+    updateClientList();
 });
 
 socket.on('disconnect', () => {
@@ -147,15 +200,15 @@ socket.on('message', (...argv) => {
 socket.on('sync-up', (payload) => {
     console.debug('Sync up', payload);
     const { clients } = payload.room;
-    updateClientList(clients);
-    const clientIds = clients.map((client) => client.id);
-    syncPeers(clientIds);
+    updateClientList();
+    syncPeers(clients);
+    connectPeers();
     console.debug('Sync up (end)', peers);
 });
 
 socket.on('offer', ({ from, offer }) => {
     console.debug('Offer', from, offer);
-    const peer = peers.get(from) || { client: { from } };
+    const peer = peers.get(from) || { client: { id: from } };
     peers.set(from, peer);
 
     const connection = new RTCPeerConnection(rtcConfig);
@@ -176,6 +229,7 @@ socket.on('offer', ({ from, offer }) => {
             to: from,
             candidate,
         });
+        updateClientList();
     };
 
     connection.ondatachannel = (event) => {
@@ -183,12 +237,15 @@ socket.on('offer', ({ from, offer }) => {
         peer.dataChannel = dataChannel;
         dataChannel.onopen = () => {
             console.debug(`Opened data channel with ${from}`);
+            updateClientList();
         };
         dataChannel.onclose = () => {
             console.debug(`Closed data channel with ${from}`);
+            updateClientList();
         };
         dataChannel.onmessage = (messageEvent) => {
             console.debug(`Message on data channel from ${from}`, messageEvent);
+            onDataChannelMessage(from, messageEvent);
         };
     };
 
@@ -196,6 +253,7 @@ socket.on('offer', ({ from, offer }) => {
         new RTCSessionDescription(offer),
         () => {
             console.debug(`Set remote descriptor for ${from}`);
+            updateClientList();
         },
         (error) => {
             console.error(`Failed to set remote descriptor for ${from}:`, error);
@@ -209,6 +267,7 @@ socket.on('offer', ({ from, offer }) => {
                 to: from,
                 answer,
             });
+            updateClientList();
         },
         (error) => {
             console.error(`Failed to create answer for ${from}:`, error);
@@ -216,7 +275,7 @@ socket.on('offer', ({ from, offer }) => {
     );
 
     peer.connection = connection;
-    console.log(peers);
+    updateClientList();
 });
 
 socket.on('answer', ({ from, answer }) => {
@@ -226,11 +285,13 @@ socket.on('answer', ({ from, answer }) => {
         new RTCSessionDescription(answer),
         () => {
             console.debug(`Set remote descriptor for ${from}`);
+            updateClientList();
         },
         (error) => {
             console.error(`Failed to set remote descriptor for ${from}:`, error);
         },
     );
+    updateClientList();
 });
 
 socket.on('ice-candidate', ({ from, candidate }) => {
@@ -240,9 +301,11 @@ socket.on('ice-candidate', ({ from, candidate }) => {
     {
         peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
         console.debug(`Set remote ICE Candidate from ${from}.`);
+        updateClientList();
     }
     catch (error)
     {
         console.error(`Failed to add ICE candidate from ${from}:`, error);
     }
+    updateClientList();
 });
