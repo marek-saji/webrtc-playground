@@ -10,8 +10,6 @@ const PORT = process.env.PORT || 5000;
 const DIR = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = joinPath(DIR, 'static');
 
-const ROOM_SIZE_LIMIT = 2;
-
 
 // Logging
 
@@ -46,6 +44,9 @@ const app = createServer((req, res) => {
 const SOCKET = 'socket';
 const NAME = Symbol('name');
 const ROOM = Symbol('room');
+
+const clients = new Map();
+
 class Client
 {
     constructor (socket)
@@ -97,7 +98,22 @@ class Client
     }
 }
 
-const clients = new Map();
+function getRoomDescriptor (socket, roomName)
+{
+    const roomDescriptor = {};
+
+    const roomClients = socket.adapter.rooms[roomName] || [];
+    const roomClientSockets =
+        roomClients.length
+            ? Object.keys(roomClients.sockets)
+            : [];
+
+    roomDescriptor.clients = roomClientSockets.map(
+        (id) => clients.get(id).descriptor,
+    );
+
+    return roomDescriptor;
+}
 
 const io = socketIO.listen(app);
 io.sockets.on('connection', (socket) => {
@@ -116,32 +132,16 @@ io.sockets.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         logServer(client.descriptor, 'disconnected');
-        broadcast('leaves', client.descriptor);
         clients.delete(client.id);
+        broadcast('sync-up', { room: getRoomDescriptor(socket, client.room) });
     });
 
     socket.on('hello', (payload) => {
         client.name = payload.clientName;
-
-        // eslint-disable-next-line no-constant-condition
-        while (true)
-        {
-            const roomClients =
-            socket.adapter.rooms[payload.room] || { length: 0 };
-            if (roomClients.length < ROOM_SIZE_LIMIT)
-            {
-                break;
-            }
-            const clientToKickOut = clients.get(
-                Object.keys(roomClients.sockets || {})[0],
-            );
-            clientToKickOut.room = null;
-            clientToKickOut.socket.emit('kick', client.descriptor);
-        }
-
         client.room = payload.room;
-        emit('hello', client.descriptor);
-        broadcast('enters', client.descriptor);
+        const roomDescriptor = getRoomDescriptor(socket, client.room);
+        emit('hello', { you: client.descriptor, room: roomDescriptor });
+        broadcast('sync-up', { room: roomDescriptor });
     });
 
     socket.on('log', logClient);
