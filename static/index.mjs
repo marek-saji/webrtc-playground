@@ -25,10 +25,14 @@ document.getElementById('new-client-link').href = (() => {
 
 const rtcConfig = {
     iceServers: [
-        // { 'urls': 'stun:stun.l.google.com:19302' }
-        { urls: 'stun:stun.stunprotocol.org:3478' },
+        // { urls: 'stun:stun.stunprotocol.org:3478' },
+        // { urls: 'stun:stun.l.google.com:19302' }
         // https://gist.github.com/zziuni/3741933
     ],
+    configuration: {
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+    },
 };
 
 const peers = new Map();
@@ -67,13 +71,35 @@ function updateClientList ()
             input.focus();
         });
 
+        item.querySelector('[name="there"]').setAttribute('data-client-id', peer.client.id);
+        const hereVideo = item.querySelector('[name="here"]');
+        item.querySelector('[name="call"]').addEventListener('click', async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true,
+            });
+            hereVideo.srcObject = stream;
+            hereVideo.play();
+            try
+            {
+                // peer.connection.addStream(stream);
+                await stream.getTracks().map(async (track) => {
+                    peer.connection.addTrack(track, stream);
+                });
+            }
+            catch (error)
+            {
+                console.error(error);
+            }
+        });
+
         listElement.appendChild(item);
     });
 }
 
 function onDataChannelMessage (clientId, event)
 {
-    document.querySelector(`[data-client-id="${clientId}"]`).textContent += `\nthem: ${event.data}`;
+    document.querySelector(`output[data-client-id="${clientId}"]`).textContent += `\nthem: ${event.data}`;
 }
 
 // FIXME No callback hell, please
@@ -92,7 +118,7 @@ function connectPeer (id)
             sdpMid: eventCandidate.sdpMid,
             candidate: eventCandidate.candidate,
         };
-        console.debug('ICE candidate', candidate);
+        // console.debug('ICE candidate', candidate);
         socket.emit('ice-candidate', {
             to: id,
             candidate,
@@ -100,6 +126,25 @@ function connectPeer (id)
         updateClientList();
     };
 
+    // connection.onaddstream = (event) => {
+    //     console.log(`Stream from ${id}:`, event);
+    // };
+    connection.ontrack = (event) => {
+        console.log(`Track from ${id}:`, event);
+        const thereVideo = document.querySelector(`video[data-client-id="${id}"]`);
+        if (event.streams && event.streams[0])
+        {
+            thereVideo.srcObject = event.streams[0];
+        }
+        else
+        {
+            thereVideo.srcObject = new MediaStream(event.track);
+        }
+        thereVideo.play();
+        return false;
+    };
+
+    // const dataChannel = null;
     const dataChannel = connection.createDataChannel('test');
     dataChannel.onopen = () => {
         console.debug(`Opened data channel with ${id}`);
@@ -224,12 +269,30 @@ socket.on('offer', ({ from, offer }) => {
             sdpMid: eventCandidate.sdpMid,
             candidate: eventCandidate.candidate,
         };
-        console.debug('ICE candidate', candidate);
+        // console.debug('ICE candidate', candidate);
         socket.emit('ice-candidate', {
             to: from,
             candidate,
         });
         updateClientList();
+    };
+
+    // connection.onaddstream = (event) => {
+    //     console.log(`Stream from ${from}:`, event);
+    // };
+    connection.ontrack = (event) => {
+        console.log(`Track from ${from}:`, event);
+        const thereVideo = document.querySelector(`video[data-client-id="${from}"]`);
+        if (event.streams && event.streams[0])
+        {
+            thereVideo.srcObject = event.streams[0];
+        }
+        else
+        {
+            thereVideo.srcObject = new MediaStream(event.track);
+        }
+        thereVideo.play();
+        return false;
     };
 
     connection.ondatachannel = (event) => {
@@ -295,12 +358,12 @@ socket.on('answer', ({ from, answer }) => {
 });
 
 socket.on('ice-candidate', ({ from, candidate }) => {
-    console.debug(`Remote ICE candidate from ${from}`, from, candidate);
+    // console.debug(`Remote ICE candidate from ${from}`, from, candidate);
     const peer = peers.get(from);
     try
     {
         peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
-        console.debug(`Set remote ICE Candidate from ${from}.`);
+        // console.debug(`Set remote ICE Candidate from ${from}.`);
         updateClientList();
     }
     catch (error)
